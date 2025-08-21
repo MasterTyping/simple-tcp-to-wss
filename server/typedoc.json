@@ -3,5 +3,5 @@
   "out": "../docs/",
   "tsconfig": "./tsconfig.server.json",
   "includeVersion": true,
-  "excludePrivate": true
+  "excludePrivate": false
 }
