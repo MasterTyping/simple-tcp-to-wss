@@ -3,7 +3,7 @@ import { createServer } from 'http'
 import { EventEmitter } from 'events'
 import dotenv from 'dotenv'
 import net from 'net'
-import { colorize } from 'simple-tcp-to-wss-common';
+import { Logger } from 'simple-tcp-to-wss-common/logger';
 
 
 /**
@@ -38,6 +38,8 @@ export interface Subscription {
 
 const env = process.env.NODE_ENV || 'development'
 
+const logger = new Logger(process.env.NODE_ENV === 'development')
+
 dotenv.config({
     path: env === 'development' ? '.env.development' : '.env.production'
 })
@@ -52,7 +54,7 @@ dotenv.config({
  * const server = new SocketServer();
  * 
  * server.on('clientConnected', ({ clientId, ip }) => {
- *   console.log(`New client connected: ${clientId} from ${ip}`);
+ *   logger.log(`New client connected: ${clientId} from ${ip}`);
  * });
  * 
  * // 서버 종료
@@ -75,100 +77,15 @@ export class SocketServer extends EventEmitter {
 
     intervals: Map<string, NodeJS.Timeout> = new Map()
 
-    robotThrottleMs: number = 16
-    mobileThrottleMs: number = 16
-    criThrottleMs: number = 100
-    lastCriBroadcast: number = 0
-    lastRobotBroadcast: number = 0
-    lastMobileBroadcast: number = 0
+
+    eventThrottles: Map<string, { lastBroadcast: number, throttleMs: number }> = new Map();
     latestTcpData: any = null
     tcpBroadcastTimer: NodeJS.Timeout | null = null
 
-    /**
-     * 서버의 로그를 출력합니다.
-     * @param args 로그로 출력할 값들 console.log 와 사용법이 같다
-     * @example
-     * ``` typescript
-     * this.log('서버 시작');
-     * ```
-     */
-    log(...args: any[]): void {
-        if (this.debugMode) {
-            const timestamp = colorize.debug(new Date().toISOString())
-            const serverTag = colorize.server('[SERVER]')
-            const msg = colorize.info(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
-            console.log(`${serverTag} ${timestamp}`, msg)
-        }
-    }
 
     /**
-     * 에러 로그를 출력합니다.
-     * @param args 에러로 출력할 값들
-     * @example
-     * this.logError('에러 발생', error);
+     * Logger 인스턴스 (공통)
      */
-    logError(...args: any[]): void {
-        const timestamp = colorize.debug(new Date().toISOString())
-        const errorTag = colorize.error('[ERROR]')
-        const msg = colorize.error(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
-        console.error(`${errorTag} ${timestamp}`, msg)
-    }
-
-    /**
-     * TCP 관련 로그를 출력합니다.
-     * @param args TCP 로그로 출력할 값들
-     * @example
-     * this.logTcp('TCP 연결됨');
-     */
-    logTcp(...args: any[]): void {
-        if (this.debugMode) {
-            const timestamp = colorize.debug(new Date().toISOString())
-            const tcpTag = colorize.tcp('[TCP]')
-            const msg = colorize.tcp(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
-            console.log(`${tcpTag} ${timestamp}`, msg)
-        }
-    }
-
-    /**
-     * 클라이언트 관련 로그를 출력합니다.
-     * @param args 클라이언트 로그로 출력할 값들
-     * @example
-     * this.logClient('클라이언트 접속', clientId);
-     */
-    logClient(...args: any[]): void {
-        if (this.debugMode) {
-            const timestamp = colorize.debug(new Date().toISOString())
-            const clientTag = colorize.client('[CLIENT]')
-            const msg = colorize.client(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
-            console.log(`${clientTag} ${timestamp}`, msg)
-        }
-    }
-
-    /**
-     * 성공 로그를 출력합니다.
-     * @param args 성공 로그로 출력할 값들
-     * @example
-     * this.logSuccess('서버가 성공적으로 시작됨');
-     */
-    logSuccess(...args: any[]): void {
-        const timestamp = colorize.debug(new Date().toISOString())
-        const successTag = colorize.success('[SUCCESS]')
-        const msg = colorize.success(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
-        console.log(`${successTag} ${timestamp}`, msg)
-    }
-
-    /**
-     * 경고 로그를 출력합니다.
-     * @param args 경고 로그로 출력할 값들
-     * @example
-     * this.logWarning('메모리 사용량 높음');
-     */
-    logWarning(...args: any[]): void {
-        const timestamp = colorize.debug(new Date().toISOString())
-        const warningTag = colorize.warning('[WARNING]')
-        const msg = colorize.warning(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
-        console.log(`${warningTag} ${timestamp}`, msg)
-    }
 
     /**
      * 기본 WebSocket 이벤트를 설정합니다.
@@ -177,7 +94,7 @@ export class SocketServer extends EventEmitter {
      */
     setupDefaultEvents(): void {
         this.on('defaultEvent', ({ value, source }) => {
-            this.logClient(`CRI data updated to ${value} from ${source}, notifying subscribers`)
+            logger.client(`CRI data updated to ${value} from ${source}, notifying subscribers`)
             this.notifyEventSubscribers('defaultEvent', value)
         })
     }
@@ -199,10 +116,22 @@ export class SocketServer extends EventEmitter {
         this.setupTcpClient(tcpHost, tcpPort)
 
         server.listen(port, () => {
-            this.logSuccess(`WebSocket server started on port ${port}`)
+            logger.success(`WebSocket server started on port ${port}`)
         })
     }
 
+    /**
+     * WebSocket 연결 이벤트 및 클라이언트 등록을 처리합니다.
+    * @example
+    * ```typescript
+    * // WebSocket 연결 시 클라이언트 등록 및 이벤트 바인딩
+    * this.wss.on('connection', (socket, request) => {
+    *   const clientId = this.generateClientId();
+    *   this.clients.set(clientId, { id: clientId, socket, lastActivity: Date.now(), subscriptions: new Map() });
+    *   this.sendToClient(clientId, 'connection', { success: true, clientId });
+    * });
+    * ```
+     */
     setupSocketEvents(): void {
         this.wss.on('connection', (socket: WebSocket, request) => {
             const clientId = this.generateClientId()
@@ -216,7 +145,7 @@ export class SocketServer extends EventEmitter {
             }
 
             this.clients.set(clientId, client)
-            this.logClient(`Client connected: ${clientId} from ${ip}, Total clients: ${this.clients.size}`)
+            logger.client(`Client connected: ${clientId} from ${ip}, Total clients: ${this.clients.size}`)
 
             this.sendToClient(clientId, 'connection', {
                 success: true,
@@ -233,7 +162,7 @@ export class SocketServer extends EventEmitter {
             })
 
             socket.on('close', (code, reason) => {
-                this.logClient(`Client ${clientId} connection closed with code ${code}, reason: ${reason || 'No reason provided'}`)
+                logger.client(`Client ${clientId} connection closed with code ${code}, reason: ${reason || 'No reason provided'}`)
                 this.handleClientDisconnect(clientId)
             })
 
@@ -245,10 +174,34 @@ export class SocketServer extends EventEmitter {
         })
     }
 
+    /**
+     * TCP 서버 연결을 초기화합니다.
+     * @param host TCP 서버 호스트명
+     * @param port TCP 서버 포트
+    * @example
+    * ```typescript
+    * // TCP 서버 연결 초기화
+    * this.setupTcpClient('localhost', 9000);
+    * ```
+     */
     setupTcpClient(host: string, port: number): void {
         this.connectToTcpServer(host, port)
     }
 
+    /**
+     * TCP 서버에 연결합니다.
+     * @param host TCP 서버 호스트명
+     * @param port TCP 서버 포트
+    * @example
+    * ```typescript
+    * // TCP 서버에 연결
+    * this.connectToTcpServer('localhost', 9000);
+    * // 연결 후 pingPongInterval 설정
+    * this.pingPongInterval = setInterval(() => {
+    *   this.sendToTcpServer('Hello TCP Server');
+    * }, 5000);
+    * ```
+     */
     connectToTcpServer(host: string, port: number): void {
         if (this.tcpClient) {
             this.tcpClient.destroy()
@@ -260,7 +213,7 @@ export class SocketServer extends EventEmitter {
         this.tcpClient.setKeepAlive(true, 10000)
 
         this.tcpClient.connect(port, host, () => {
-            this.logTcp(`Connected to TCP server at ${host}:${port}`)
+            logger.tcp(`Connected to TCP server at ${host}:${port}`)
             this.tcpReconnectAttempts = 0
 
             if (this.tcpReconnectInterval) {
@@ -281,45 +234,55 @@ export class SocketServer extends EventEmitter {
                     receivedAt,
                     dataLength: data.length
                 }
-                this.throttledTcpBroadcast(null, receivedAt)
+                this.throttledTcpBroadcast('', null, receivedAt)
             } catch (error) {
-                this.logError('Error processing TCP data:', error)
+                logger.error('Error processing TCP data:', error)
             }
         })
         this.tcpClient.on('close', () => {
-            this.logTcp('TCP connection closed')
+            logger.tcp('TCP connection closed')
             this.tcpClient = null
             this.scheduleTcpReconnect(host, port)
         })
         this.tcpClient.on('error', (error: any) => {
-            this.logError('TCP connection error:', error)
-            this.logTcp(`TCP error details: ${error.message}, code: ${error.code}`)
+            logger.error('TCP connection error:', error)
+            logger.tcp(`TCP error details: ${error.message}, code: ${error.code}`)
             switch (error.code) {
                 case 'ECONNRESET':
-                    this.logTcp('Connection was reset by peer')
+                    logger.tcp('Connection was reset by peer')
                     break
                 case 'ETIMEDOUT':
-                    this.logTcp('Connection timed out')
+                    logger.tcp('Connection timed out')
                     break
                 case 'ECONNREFUSED':
-                    this.logTcp('Connection refused by server')
+                    logger.tcp('Connection refused by server')
                     break
                 default:
-                    this.logTcp(`Unknown error: ${error.code}`)
+                    logger.tcp(`Unknown error: ${error.code}`)
             }
             this.tcpClient = null
             this.scheduleTcpReconnect(host, port)
         })
 
         this.tcpClient.on('timeout', () => {
-            this.logWarning('TCP connection timeout')
+            logger.warning('TCP connection timeout')
             this.tcpClient?.destroy()
         })
     }
 
+    /**
+     * TCP 재연결을 예약합니다.
+     * @param host TCP 서버 호스트명
+     * @param port TCP 서버 포트
+    * @example
+    * ```typescript
+    * // 재연결 시도 및 딜레이 적용
+    * this.scheduleTcpReconnect('localhost', 9000);
+    * ```
+     */
     scheduleTcpReconnect(host: string, port: number): void {
         if (this.tcpReconnectAttempts >= this.maxTcpReconnectAttempts) {
-            this.logError(`Max TCP reconnection attempts (${this.maxTcpReconnectAttempts}) reached. Stopping reconnection.`)
+            logger.error(`Max TCP reconnection attempts (${this.maxTcpReconnectAttempts}) reached. Stopping reconnection.`)
             return
         }
         if (this.tcpReconnectInterval) {
@@ -329,7 +292,7 @@ export class SocketServer extends EventEmitter {
         this.tcpReconnectAttempts++
         const delay = Math.min(1000 * Math.pow(2, this.tcpReconnectAttempts - 1), 30000)
 
-        this.log(`Scheduling TCP reconnection in ${delay}ms (attempt ${this.tcpReconnectAttempts}/${this.maxTcpReconnectAttempts})`)
+        logger.log(`Scheduling TCP reconnection in ${delay}ms (attempt ${this.tcpReconnectAttempts}/${this.maxTcpReconnectAttempts})`)
 
         this.tcpReconnectInterval = setTimeout(() => {
             this.tcpReconnectInterval = null
@@ -337,9 +300,19 @@ export class SocketServer extends EventEmitter {
         }, delay)
     }
 
+    /**
+     * TCP 서버로 데이터를 전송합니다.
+     * @param data 전송할 데이터 (string 또는 Buffer)
+     * @returns 전송 성공 여부
+    * @example
+    * ```typescript
+    * // TCP 서버로 데이터 전송
+    * this.sendToTcpServer('hello');
+    * ```
+     */
     public sendToTcpServer(data: string | Buffer): boolean {
         if (!this.tcpClient || this.tcpClient.readyState !== 'open') {
-            this.log('TCP client not connected, cannot send data')
+            logger.log('TCP client not connected, cannot send data')
             return false
         }
 
@@ -349,7 +322,7 @@ export class SocketServer extends EventEmitter {
             } else {
                 this.tcpClient.write(data)
             }
-            this.log('Data sent to TCP server:', data.toString())
+            logger.log('Data sent to TCP server:', data.toString())
             return true
         } catch (error) {
             console.error('Error sending data to TCP server:', error)
@@ -357,22 +330,46 @@ export class SocketServer extends EventEmitter {
         }
     }
 
-    throttledTcpBroadcast(parsedData: any, receivedAt: number): void {
+    /**
+     * TCP 데이터 브로드캐스트를 쓰로틀링하여 전송합니다.
+     * @param parsedData 파싱된 데이터
+     * @param receivedAt 수신 시각 (timestamp)
+     * @param eventName 이벤트 이름
+    * @example
+    * ```typescript
+    * // TCP 데이터 수신 시 브로드캐스트
+    * this.throttledTcpBroadcast('RobotData', parsedData, receivedAt);
+    * ```
+     */
+    throttledTcpBroadcast(eventName: string, parsedData: any, receivedAt: number): void {
         const now = Date.now()
 
-        if (now - this.lastRobotBroadcast >= this.robotThrottleMs) {
-            this.notifyEventSubscribers('RobotData', {
+        const eventThrottle = this.eventThrottles.get(eventName) || { lastBroadcast: 0, throttleMs: 100 };
+        if (now - eventThrottle.lastBroadcast >= eventThrottle.throttleMs) {
+            this.notifyEventSubscribers(eventName, {
                 data: parsedData,
                 receivedAt,
                 type: 'robot'
             })
-            this.lastRobotBroadcast = now
+            this.eventThrottles.set(eventName, { ...eventThrottle, lastBroadcast: now })
         }
     }
 
 
 
 
+    /**
+     * 클라이언트의 이벤트 구독을 처리합니다.
+     * @param clientId 클라이언트 ID
+     * @param eventName 구독할 이벤트명
+     * @param data 추가 데이터(옵션)
+     * @returns 구독 ID
+    * @example
+    * ```typescript
+    * // 클라이언트가 이벤트 구독 요청 시
+    * const subscriptionId = this.handleSubscription(clientId, 'RobotData');
+    * ```
+     */
     handleSubscription(clientId: string, eventName: string, data?: any): string {
         const client = this.clients.get(clientId)
         if (!client) throw new Error(`Client ${clientId} not found`)
@@ -390,7 +387,7 @@ export class SocketServer extends EventEmitter {
             eventName,
         })
 
-        this.log(`Client ${clientId} subscribed to ${eventName} with ID ${subscriptionId}`)
+        logger.log(`Client ${clientId} subscribed to ${eventName} with ID ${subscriptionId}`)
 
         this.sendToClient(clientId, 'SubscriptionConfirmed', {
             subscriptionId,
@@ -402,6 +399,17 @@ export class SocketServer extends EventEmitter {
         return subscriptionId
     }
 
+    /**
+     * 클라이언트의 이벤트 구독 해제를 처리합니다.
+     * @param clientId 클라이언트 ID
+     * @param subscriptionId 구독 ID
+     * @returns 성공 여부
+    * @example
+    * ```typescript
+    * // 클라이언트가 구독 해제 요청 시
+    * const success = this.handleUnsubscription(clientId, subscriptionId);
+    * ```
+     */
     handleUnsubscription(clientId: string, subscriptionId: string): boolean {
         const subscription = this.subscriptions.get(subscriptionId)
         if (!subscription || subscription.clientId !== clientId) {
@@ -421,12 +429,22 @@ export class SocketServer extends EventEmitter {
             }
         }
 
-        this.log(`Client ${clientId} unsubscribed from ${subscription.eventName} (ID: ${subscriptionId})`)
+        logger.log(`Client ${clientId} unsubscribed from ${subscription.eventName} (ID: ${subscriptionId})`)
         return true
     }
 
 
 
+    /**
+     * 클라이언트로부터의 메시지를 처리합니다.
+     * @param clientId 클라이언트 ID
+     * @param data 수신 데이터
+    * @example
+    * ```typescript
+    * // 클라이언트 메시지 수신 시
+    * this.handleClientMessage(clientId, data);
+    * ```
+     */
     handleClientMessage(clientId: string, data: any): void {
         try {
             const client = this.clients.get(clientId)
@@ -461,16 +479,36 @@ export class SocketServer extends EventEmitter {
                     })
                     break
                 default:
-                    this.log(`Unhandled message type from client ${clientId}:`, message.type)
+                    logger.log(`Unhandled message type from client ${clientId}:`, message.type)
             }
         } catch (error) {
             console.error(`Error processing message from client ${clientId}:`, error)
         }
     }
 
+    /**
+     * 클라이언트 연결 파라미터를 처리합니다.
+     * @param clientId 클라이언트 ID
+     * @param params 파라미터 객체
+    * @example
+    * ```typescript
+    * // Connection 메시지 타입 처리
+    * this.handleConnectionParams(clientId, params);
+    * ```
+     */
     handleConnectionParams(clientId: string, params: any): void {
-        this.log(`Connection parameters received from client ${clientId}:`, params)
+        logger.log(`Connection parameters received from client ${clientId}:`, params)
     }
+    /**
+     * 이벤트 구독자에게 데이터를 전송합니다.
+     * @param eventName 이벤트명
+     * @param data 전송 데이터
+    * @example
+    * ```typescript
+    * // 이벤트 구독자에게 데이터 전송
+    * this.notifyEventSubscribers('RobotData', { foo: 1 });
+    * ```
+     */
     notifyEventSubscribers(eventName: string, data: any): void {
         let notifiedCount = 0
         for (const [clientId, client] of Array.from(this.clients.entries())) {
@@ -480,10 +518,19 @@ export class SocketServer extends EventEmitter {
             }
         }
         if (notifiedCount > 0) {
-            this.log(`Notified ${notifiedCount} subscribers of event '${eventName}'`)
+            logger.log(`Notified ${notifiedCount} subscribers of event '${eventName}'`)
         }
     }
 
+    /**
+     * 클라이언트 연결 해제를 처리합니다.
+     * @param clientId 클라이언트 ID
+    * @example
+    * ```typescript
+    * // 클라이언트 연결 해제 시
+    * this.handleClientDisconnect(clientId);
+    * ```
+     */
     handleClientDisconnect(clientId: string): void {
         const client = this.clients.get(clientId)
 
@@ -506,7 +553,7 @@ export class SocketServer extends EventEmitter {
         }
 
         this.clients.delete(clientId)
-        this.log(`Client disconnected: ${clientId}, Remaining clients: ${this.clients.size}`)
+        logger.log(`Client disconnected: ${clientId}, Remaining clients: ${this.clients.size}`)
     }
 
     /**
@@ -524,7 +571,7 @@ export class SocketServer extends EventEmitter {
             const message = JSON.stringify({ type, data })
             client.socket.send(message)
             if (type !== 'ping') {
-                this.log(`Message sent to client ${clientId}: ${type}`)
+                logger.log(`Message sent to client ${clientId}: ${type}`)
             }
         } catch (error) {
             console.error(`Error sending message to client ${clientId}:`, error)
@@ -548,7 +595,7 @@ export class SocketServer extends EventEmitter {
             }
         }
         if (type !== 'ping') {
-            this.log(`Broadcast ${type} sent to ${sentCount} clients`)
+            logger.log(`Broadcast ${type} sent to ${sentCount} clients`)
         }
     }
 
@@ -580,7 +627,7 @@ export class SocketServer extends EventEmitter {
                         client.socket.send(JSON.stringify({ type: 'ping', timestamp: now }))
 
                         if (now - client.lastActivity > 120000) {
-                            this.log(
+                            logger.log(
                                 `Client ${id} inactive for too long (${((now - client.lastActivity) / 1000).toFixed(0)}s), terminating connection`,
                             )
                             client.socket.terminate()
@@ -597,7 +644,7 @@ export class SocketServer extends EventEmitter {
             }
 
             if (this.clients.size > 0) {
-                this.log(`Heartbeat check: ${activeClients} active, ${inactiveClients} inactive clients`)
+                logger.log(`Heartbeat check: ${activeClients} active, ${inactiveClients} inactive clients`)
             }
         }, 30000)
     }
@@ -640,7 +687,7 @@ export class SocketServer extends EventEmitter {
         }
 
         this.wss.close()
-        this.log('WebSocket server shut down')
+        logger.log('WebSocket server shut down')
 
         this.emit('serverShutdown')
     }
@@ -650,13 +697,13 @@ if (require.main === module) {
     const socketServer = new SocketServer()
 
     process.on('SIGINT', () => {
-        console.log('[SERVER] Received SIGINT. Shutting down WebSocket server...')
+        logger.error('[SERVER] Received SIGINT. Shutting down WebSocket server...')
         socketServer.shutdown()
         process.exit(0)
     })
 
     process.on('SIGTERM', () => {
-        console.log('[SERVER] Received SIGTERM. Shutting down WebSocket server...')
+        logger.error('[SERVER] Received SIGTERM. Shutting down WebSocket server...')
         socketServer.shutdown()
         process.exit(0)
     })

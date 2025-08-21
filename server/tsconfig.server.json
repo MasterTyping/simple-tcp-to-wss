@@ -7,6 +7,6 @@
     "noEmit": false,
     "types": ["node"]
   },
-  "include": ["./index.ts"],
+  "include": ["./index.ts", "../common/index.ts"],
   "target": "ES2020"
 }
