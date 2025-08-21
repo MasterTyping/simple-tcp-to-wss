@@ -15,14 +15,22 @@ import { colorize } from 'simple-tcp-to-wss-common';
  * @property {Map<string, Set<string>>} subscriptions - Map of event names to sets of subscription IDs.
  *
  */
-interface SocketClient {
+export interface SocketClient {
     id: string
     socket: WebSocket
     lastActivity: number
     subscriptions: Map<string, Set<string>>
 }
 
-interface Subscription {
+/**
+ * 구독 정보를 나타내는 인터페이스입니다.
+ * 
+ * @interface Subscription
+ * @property {string} clientId - The ID of the client that created the subscription.
+ * @property {string} subscriptionId - Unique identifier for the subscription.
+ * @property {string} eventName - The name of the event to which the client is subscribed.
+ */
+export interface Subscription {
     clientId: string
     subscriptionId: string
     eventName: string
@@ -34,37 +42,57 @@ dotenv.config({
     path: env === 'development' ? '.env.development' : '.env.production'
 })
 
+
+/**
+ * WebSocket 서버 클래스로, TCP 서버와의 연결을 중계하고 클라이언트 연결을 관리합니다.
+ * 
+ * @extends EventEmitter
+ * @example
+ * ```typescript
+ * const server = new SocketServer();
+ * 
+ * server.on('clientConnected', ({ clientId, ip }) => {
+ *   console.log(`New client connected: ${clientId} from ${ip}`);
+ * });
+ * 
+ * // 서버 종료
+ * server.shutdown();
+ * ```
+ */
 export class SocketServer extends EventEmitter {
-    private wss: WebSocketServer
-    private clients: Map<string, SocketClient> = new Map()
-    private subscriptions: Map<string, Subscription> = new Map()
-    private pingInterval: NodeJS.Timeout | null = null
-    private debugMode: boolean = true
-    private nextSubscriptionId: number = 1
-    private tcpClient: net.Socket | null = null
-    private tcpReconnectInterval: NodeJS.Timeout | null = null
-    private tcpReconnectAttempts: number = 0
-    private maxTcpReconnectAttempts: number = 5
-    private pingPongInterval: NodeJS.Timeout | null = null
+    // WebSocket 서버 인스턴스
+    wss: WebSocketServer
+    clients: Map<string, SocketClient> = new Map()
+    subscriptions: Map<string, Subscription> = new Map()
+    pingInterval: NodeJS.Timeout | null = null
+    debugMode: boolean = true
+    nextSubscriptionId: number = 1
+    tcpClient: net.Socket | null = null
+    tcpReconnectInterval: NodeJS.Timeout | null = null
+    tcpReconnectAttempts: number = 0
+    maxTcpReconnectAttempts: number = 5
+    pingPongInterval: NodeJS.Timeout | null = null
 
-    private intervals: Map<string, NodeJS.Timeout> = new Map()
+    intervals: Map<string, NodeJS.Timeout> = new Map()
 
-    private robotThrottleMs: number = 16
-    private mobileThrottleMs: number = 16
-    private criThrottleMs: number = 100
-    private lastCriBroadcast: number = 0
-    private lastRobotBroadcast: number = 0
-    private lastMobileBroadcast: number = 0
-    private latestTcpData: any = null
-    private tcpBroadcastTimer: NodeJS.Timeout | null = null
+    robotThrottleMs: number = 16
+    mobileThrottleMs: number = 16
+    criThrottleMs: number = 100
+    lastCriBroadcast: number = 0
+    lastRobotBroadcast: number = 0
+    lastMobileBroadcast: number = 0
+    latestTcpData: any = null
+    tcpBroadcastTimer: NodeJS.Timeout | null = null
 
     /**
      * 서버의 로그를 출력합니다.
-     * @param args 로그로 출력할 값들
+     * @param args 로그로 출력할 값들 console.log 와 사용법이 같다
      * @example
+     * ``` typescript
      * this.log('서버 시작');
+     * ```
      */
-    private log(...args: any[]): void {
+    log(...args: any[]): void {
         if (this.debugMode) {
             const timestamp = colorize.debug(new Date().toISOString())
             const serverTag = colorize.server('[SERVER]')
@@ -79,7 +107,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.logError('에러 발생', error);
      */
-    private logError(...args: any[]): void {
+    logError(...args: any[]): void {
         const timestamp = colorize.debug(new Date().toISOString())
         const errorTag = colorize.error('[ERROR]')
         const msg = colorize.error(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
@@ -92,7 +120,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.logTcp('TCP 연결됨');
      */
-    private logTcp(...args: any[]): void {
+    logTcp(...args: any[]): void {
         if (this.debugMode) {
             const timestamp = colorize.debug(new Date().toISOString())
             const tcpTag = colorize.tcp('[TCP]')
@@ -107,7 +135,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.logClient('클라이언트 접속', clientId);
      */
-    private logClient(...args: any[]): void {
+    logClient(...args: any[]): void {
         if (this.debugMode) {
             const timestamp = colorize.debug(new Date().toISOString())
             const clientTag = colorize.client('[CLIENT]')
@@ -122,7 +150,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.logSuccess('서버가 성공적으로 시작됨');
      */
-    private logSuccess(...args: any[]): void {
+    logSuccess(...args: any[]): void {
         const timestamp = colorize.debug(new Date().toISOString())
         const successTag = colorize.success('[SUCCESS]')
         const msg = colorize.success(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
@@ -135,7 +163,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.logWarning('메모리 사용량 높음');
      */
-    private logWarning(...args: any[]): void {
+    logWarning(...args: any[]): void {
         const timestamp = colorize.debug(new Date().toISOString())
         const warningTag = colorize.warning('[WARNING]')
         const msg = colorize.warning(args.map(arg => typeof arg === 'string' ? arg : JSON.stringify(arg)).join(' '))
@@ -147,7 +175,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.setupDefaultEvents();
      */
-    private setupDefaultEvents(): void {
+    setupDefaultEvents(): void {
         this.on('defaultEvent', ({ value, source }) => {
             this.logClient(`CRI data updated to ${value} from ${source}, notifying subscribers`)
             this.notifyEventSubscribers('defaultEvent', value)
@@ -175,7 +203,7 @@ export class SocketServer extends EventEmitter {
         })
     }
 
-    private setupSocketEvents(): void {
+    setupSocketEvents(): void {
         this.wss.on('connection', (socket: WebSocket, request) => {
             const clientId = this.generateClientId()
             const ip = request.headers['x-forwarded-for'] || request.socket.remoteAddress
@@ -217,11 +245,11 @@ export class SocketServer extends EventEmitter {
         })
     }
 
-    private setupTcpClient(host: string, port: number): void {
+    setupTcpClient(host: string, port: number): void {
         this.connectToTcpServer(host, port)
     }
 
-    private connectToTcpServer(host: string, port: number): void {
+    connectToTcpServer(host: string, port: number): void {
         if (this.tcpClient) {
             this.tcpClient.destroy()
         }
@@ -289,7 +317,7 @@ export class SocketServer extends EventEmitter {
         })
     }
 
-    private scheduleTcpReconnect(host: string, port: number): void {
+    scheduleTcpReconnect(host: string, port: number): void {
         if (this.tcpReconnectAttempts >= this.maxTcpReconnectAttempts) {
             this.logError(`Max TCP reconnection attempts (${this.maxTcpReconnectAttempts}) reached. Stopping reconnection.`)
             return
@@ -329,7 +357,7 @@ export class SocketServer extends EventEmitter {
         }
     }
 
-    private throttledTcpBroadcast(parsedData: any, receivedAt: number): void {
+    throttledTcpBroadcast(parsedData: any, receivedAt: number): void {
         const now = Date.now()
 
         if (now - this.lastRobotBroadcast >= this.robotThrottleMs) {
@@ -345,7 +373,7 @@ export class SocketServer extends EventEmitter {
 
 
 
-    private handleSubscription(clientId: string, eventName: string, data?: any): string {
+    handleSubscription(clientId: string, eventName: string, data?: any): string {
         const client = this.clients.get(clientId)
         if (!client) throw new Error(`Client ${clientId} not found`)
 
@@ -374,7 +402,7 @@ export class SocketServer extends EventEmitter {
         return subscriptionId
     }
 
-    private handleUnsubscription(clientId: string, subscriptionId: string): boolean {
+    handleUnsubscription(clientId: string, subscriptionId: string): boolean {
         const subscription = this.subscriptions.get(subscriptionId)
         if (!subscription || subscription.clientId !== clientId) {
             return false
@@ -399,7 +427,7 @@ export class SocketServer extends EventEmitter {
 
 
 
-    private handleClientMessage(clientId: string, data: any): void {
+    handleClientMessage(clientId: string, data: any): void {
         try {
             const client = this.clients.get(clientId)
             if (!client) {
@@ -440,10 +468,10 @@ export class SocketServer extends EventEmitter {
         }
     }
 
-    private handleConnectionParams(clientId: string, params: any): void {
+    handleConnectionParams(clientId: string, params: any): void {
         this.log(`Connection parameters received from client ${clientId}:`, params)
     }
-    private notifyEventSubscribers(eventName: string, data: any): void {
+    notifyEventSubscribers(eventName: string, data: any): void {
         let notifiedCount = 0
         for (const [clientId, client] of Array.from(this.clients.entries())) {
             if (client.subscriptions.has(eventName)) {
@@ -456,7 +484,7 @@ export class SocketServer extends EventEmitter {
         }
     }
 
-    private handleClientDisconnect(clientId: string): void {
+    handleClientDisconnect(clientId: string): void {
         const client = this.clients.get(clientId)
 
         if (client) {
@@ -489,7 +517,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.sendToClient('client_1', 'message', { text: 'Hello' });
      */
-    private sendToClient(clientId: string, type: string, data: any): void {
+    sendToClient(clientId: string, type: string, data: any): void {
         const client = this.clients.get(clientId)
         if (!client) return
         try {
@@ -511,7 +539,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.broadcast('notice', { text: '서버 재시작' });
      */
-    private broadcast(type: string, data: any, excludeClientIds: string[] = []): void {
+    broadcast(type: string, data: any, excludeClientIds: string[] = []): void {
         let sentCount = 0
         for (const [id, _] of Array.from(this.clients.entries())) {
             if (!excludeClientIds.includes(id)) {
@@ -530,7 +558,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * const id = this.generateClientId();
      */
-    private generateClientId(): string {
+    generateClientId(): string {
         return `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     }
 
@@ -539,7 +567,7 @@ export class SocketServer extends EventEmitter {
      * @example
      * this.startHeartbeat();
      */
-    private startHeartbeat(): void {
+    startHeartbeat(): void {
         this.pingInterval = setInterval(() => {
             const now = Date.now()
             let activeClients = 0

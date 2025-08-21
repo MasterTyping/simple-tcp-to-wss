@@ -1,5 +1,11 @@
 import chalk from 'chalk'
 
+/**
+ * Utility for colorizing console output.
+ *
+ * This utility provides a set of functions to easily apply colors and styles to console output,
+ * making it more readable and visually appealing.
+ */
 export const colorize = {
     error: chalk.red.bold,
     success: chalk.green.bold,

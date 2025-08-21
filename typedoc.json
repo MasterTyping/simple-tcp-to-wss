@@ -1,0 +1,11 @@
+{
+  "entryPoints": ["./server/index.ts", "./common/index.ts"],
+  "out": "./docs/",
+  "tsconfig": "./server/tsconfig.server.json",
+  "includeVersion": true,
+  "excludePrivate": false,
+  "excludeExternals": false,
+  "categorizeByGroup": true,
+  "cleanOutputDir": false,
+  "readme": "./README.typedoc.md"
+}
