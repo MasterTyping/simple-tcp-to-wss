@@ -10,9 +10,15 @@
   "devDependencies": {
     "@types/chalk": "^2.2.4"
   },
+  "files": [
+    "dist/"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "prepublishOnly": "npm run build"
+    "prepare": "npm run build"
   },
   "gitHead": "e3089f8066401ff4df7726105d3ffa7f6b63439d"
 }
