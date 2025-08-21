@@ -7,5 +7,5 @@
     "build": "tsc --project tsconfig.json",
     "prepublishOnly": "npm run build"
   },
-  "gitHead": "3ad8e28e3ae45e08d2b8da8360208ed5f2a9145e"
+  "gitHead": "e3089f8066401ff4df7726105d3ffa7f6b63439d"
 }
