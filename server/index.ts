@@ -14,7 +14,6 @@ import { colorize } from 'simple-tcp-to-wss-common';
  * @property {number} lastActivity - Timestamp of the client's last activity.
  * @property {Map<string, Set<string>>} subscriptions - Map of event names to sets of subscription IDs.
  *
- * @description Represents a connected WebSocket client.
  */
 interface SocketClient {
     id: string
@@ -59,6 +58,12 @@ export class SocketServer extends EventEmitter {
     private latestTcpData: any = null
     private tcpBroadcastTimer: NodeJS.Timeout | null = null
 
+    /**
+     * 서버의 로그를 출력합니다.
+     * @param args 로그로 출력할 값들
+     * @example
+     * this.log('서버 시작');
+     */
     private log(...args: any[]): void {
         if (this.debugMode) {
             const timestamp = colorize.debug(new Date().toISOString())
@@ -68,6 +73,12 @@ export class SocketServer extends EventEmitter {
         }
     }
 
+    /**
+     * 에러 로그를 출력합니다.
+     * @param args 에러로 출력할 값들
+     * @example
+     * this.logError('에러 발생', error);
+     */
     private logError(...args: any[]): void {
         const timestamp = colorize.debug(new Date().toISOString())
         const errorTag = colorize.error('[ERROR]')
@@ -75,6 +86,12 @@ export class SocketServer extends EventEmitter {
         console.error(`${errorTag} ${timestamp}`, msg)
     }
 
+    /**
+     * TCP 관련 로그를 출력합니다.
+     * @param args TCP 로그로 출력할 값들
+     * @example
+     * this.logTcp('TCP 연결됨');
+     */
     private logTcp(...args: any[]): void {
         if (this.debugMode) {
             const timestamp = colorize.debug(new Date().toISOString())
@@ -84,6 +101,12 @@ export class SocketServer extends EventEmitter {
         }
     }
 
+    /**
+     * 클라이언트 관련 로그를 출력합니다.
+     * @param args 클라이언트 로그로 출력할 값들
+     * @example
+     * this.logClient('클라이언트 접속', clientId);
+     */
     private logClient(...args: any[]): void {
         if (this.debugMode) {
             const timestamp = colorize.debug(new Date().toISOString())
@@ -93,6 +116,12 @@ export class SocketServer extends EventEmitter {
         }
     }
 
+    /**
+     * 성공 로그를 출력합니다.
+     * @param args 성공 로그로 출력할 값들
+     * @example
+     * this.logSuccess('서버가 성공적으로 시작됨');
+     */
     private logSuccess(...args: any[]): void {
         const timestamp = colorize.debug(new Date().toISOString())
         const successTag = colorize.success('[SUCCESS]')
@@ -100,6 +129,12 @@ export class SocketServer extends EventEmitter {
         console.log(`${successTag} ${timestamp}`, msg)
     }
 
+    /**
+     * 경고 로그를 출력합니다.
+     * @param args 경고 로그로 출력할 값들
+     * @example
+     * this.logWarning('메모리 사용량 높음');
+     */
     private logWarning(...args: any[]): void {
         const timestamp = colorize.debug(new Date().toISOString())
         const warningTag = colorize.warning('[WARNING]')
@@ -107,6 +142,11 @@ export class SocketServer extends EventEmitter {
         console.log(`${warningTag} ${timestamp}`, msg)
     }
 
+    /**
+     * 기본 WebSocket 이벤트를 설정합니다.
+     * @example
+     * this.setupDefaultEvents();
+     */
     private setupDefaultEvents(): void {
         this.on('defaultEvent', ({ value, source }) => {
             this.logClient(`CRI data updated to ${value} from ${source}, notifying subscribers`)
@@ -441,6 +481,14 @@ export class SocketServer extends EventEmitter {
         this.log(`Client disconnected: ${clientId}, Remaining clients: ${this.clients.size}`)
     }
 
+    /**
+     * 클라이언트에게 메시지를 전송합니다.
+     * @param clientId 클라이언트의 고유 ID
+     * @param type 메시지 타입
+     * @param data 전송할 데이터
+     * @example
+     * this.sendToClient('client_1', 'message', { text: 'Hello' });
+     */
     private sendToClient(clientId: string, type: string, data: any): void {
         const client = this.clients.get(clientId)
         if (!client) return
@@ -455,6 +503,14 @@ export class SocketServer extends EventEmitter {
         }
     }
 
+    /**
+     * 모든 클라이언트에게 메시지를 브로드캐스트합니다.
+     * @param type 메시지 타입
+     * @param data 전송할 데이터
+     * @param excludeClientIds 제외할 클라이언트 ID 목록
+     * @example
+     * this.broadcast('notice', { text: '서버 재시작' });
+     */
     private broadcast(type: string, data: any, excludeClientIds: string[] = []): void {
         let sentCount = 0
         for (const [id, _] of Array.from(this.clients.entries())) {
@@ -468,10 +524,21 @@ export class SocketServer extends EventEmitter {
         }
     }
 
+    /**
+     * 클라이언트 ID를 생성합니다.
+     * @returns 생성된 클라이언트 ID
+     * @example
+     * const id = this.generateClientId();
+     */
     private generateClientId(): string {
         return `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     }
 
+    /**
+     * 하트비트(heartbeat) 체크를 시작합니다.
+     * @example
+     * this.startHeartbeat();
+     */
     private startHeartbeat(): void {
         this.pingInterval = setInterval(() => {
             const now = Date.now()
@@ -507,6 +574,11 @@ export class SocketServer extends EventEmitter {
         }, 30000)
     }
 
+    /**
+     * 서버를 안전하게 종료합니다.
+     * @example
+     * this.shutdown();
+     */
     public shutdown(): void {
         if (this.pingInterval) {
             clearInterval(this.pingInterval)
