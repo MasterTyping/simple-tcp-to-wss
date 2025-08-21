@@ -12,5 +12,6 @@
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "prepublishOnly": "npm run build"
-  }
+  },
+  "gitHead": "3ad8e28e3ae45e08d2b8da8360208ed5f2a9145e"
 }
