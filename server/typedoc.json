@@ -1,0 +1,7 @@
+{
+  "entryPoints": ["./index.ts"],
+  "out": "../docs/server",
+  "tsconfig": "./tsconfig.server.json",
+  "includeVersion": true,
+  "excludePrivate": true
+}
