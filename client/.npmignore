@@ -1,0 +1,5 @@
+docs/
+*.md
+*.log
+*.test.*
+__tests__/

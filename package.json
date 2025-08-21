@@ -12,6 +12,7 @@
     "common"
   ],
   "devDependencies": {
+    "lerna": "^8.2.3",
     "typedoc": "^0.28.10",
     "typescript": "^5.9.2"
   }
